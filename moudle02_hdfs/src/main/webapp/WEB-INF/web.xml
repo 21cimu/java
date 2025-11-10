@@ -5,7 +5,7 @@
             https://jakarta.ee/xml/ns/jakartaee/web-app_6_0.xsd"
          version="6.0">
 
-    <display-name>EmployeeApp</display-name>
+    <display-name>Personal Cloud Drive</display-name>
 
     <welcome-file-list>
         <welcome-file>index.html</welcome-file>
