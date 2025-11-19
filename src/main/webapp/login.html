@@ -8,6 +8,8 @@
   <link rel="stylesheet" href="css/style.css" />
   <!-- try-style: 新登录样式 -->
   <link rel="stylesheet" href="css/try-style.css" />
+  <!-- notify styles -->
+  <link rel="stylesheet" href="notify/style.css" />
 </head>
 <body>
   <!-- 使用 try 页面样式与结构，但保留原有登录逻辑 -->
@@ -62,7 +64,7 @@
   <script src="js/try-main.js"></script>
   <script>
     (async function(){
-      const base = window.location.origin + window.location.pathname.replace(/\/[^^/]*$/, '');
+      const base = window.location.origin + window.location.pathname.replace(/\/[^/]*$/, '');
       const status = document.getElementById('msg');
       try {
         const r = await fetch(base + '/api/auth?action=current');
@@ -90,14 +92,17 @@
           if (res && res.success) {
             const uname = (res.username || '').toString().toLowerCase();
             if (uname === 'root') { window.location.href = base + '/admin.html'; }
-            else { window.location.href = base + '/index.html'; }
+            else {
+              // queue a success notification to show on index.html after redirect
+              try { localStorage.setItem('lastNotify', JSON.stringify({ type: 'success', message: '登录成功' })); } catch (e) { }
+              window.location.href = base + '/index.html';
+            }
           } else { status.textContent = res && res.message ? res.message : '登录失败'; }
         } catch (er) { status.textContent = '登录请求失败: ' + er.message; }
       });
 
-      // 注册按钮（仅本地前端触发，实际注册页面仍为 register.html）
+      // 注册按钮（仅本地前端触发）——注册功能已在此登录页内实现，下面的逻辑直接调用后端注册 API
       const regBtn = document.getElementById('regBtn');
-      // 新：在此页面直接调用后端注册 API
       if (regBtn) regBtn.addEventListener('click', async (ev)=>{
         ev.preventDefault(); status.textContent = ''; status.style.color = '#b00020';
         const u = document.getElementById('reg_name').value.trim();
@@ -118,6 +123,7 @@
           const res = await resp.json();
           if (res && res.success) {
             status.style.color = '#1a7f1a'; status.textContent = '注册成功，正在跳转...';
+            try { localStorage.setItem('lastNotify', JSON.stringify({ type: 'success', message: '注册成功' })); } catch (e) {}
             setTimeout(()=>{ window.location.href = base + '/index.html'; }, 1200);
           } else {
             status.textContent = res && res.message ? res.message : '注册失败';
@@ -126,5 +132,8 @@
       });
     })();
   </script>
+  <!-- notify script fallback for browsers loading this page directly (will be used after redirect) -->
+  <script src="notify/script.js"></script>
+  <script src="js/notify.js"></script>
 </body>
 </html>

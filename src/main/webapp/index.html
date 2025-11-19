@@ -7,6 +7,51 @@
     <!-- Inline small SVG favicon to avoid browser requesting /favicon.ico and causing 404 in console -->
     <link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%231976D2'/><text x='8' y='11' font-size='10' text-anchor='middle' fill='white'>H</text></svg>">
     <link rel="stylesheet" href="css/style.css">
+    <!-- notify styles -->
+    <link rel="stylesheet" href="notify/style.css">
+    <!-- notify scripts (classie + flatNotify provided in notify/script.js) -->
+    <script src="notify/script.js"></script>
+    <script src="js/notify.js"></script>
+    <script>
+      // Global error handlers: ensure UI is unblocked and user gets a notification when JS errors/unhandled rejections happen.
+      function _recoveryShow(errMsg) {
+        try {
+          const lo = document.getElementById('loadingOverlay'); if (lo) lo.style.display = 'none';
+          const modal = document.getElementById('appModal'); if (modal) { modal.style.display = 'none'; modal.setAttribute('aria-hidden','true'); }
+          if (window.notify) window.notify.error(errMsg || '页面发生错误，已恢复交互');
+          console.error('GlobalRecovery:', errMsg || 'error');
+          window.__appTrace && window.__appTrace('GlobalRecovery: ' + (errMsg || 'error'));
+        } catch (e) { console.error('GlobalRecovery failed', e); }
+      }
+
+      window.addEventListener('error', function (ev) {
+        try {
+          const msg = ev && ev.message ? ev.message : String(ev);
+          _recoveryShow('页面脚本发生错误: ' + msg);
+        } catch (e) { console.error(e); }
+      });
+
+      window.addEventListener('unhandledrejection', function (ev) {
+        try {
+          const reason = ev && ev.reason ? (ev.reason.message || String(ev.reason)) : '未处理的 Promise 拒绝';
+          _recoveryShow('未处理的 Promise 拒绝: ' + reason);
+        } catch (e) { console.error(e); }
+      });
+
+      // Lightweight debug/status panel and trace helper for diagnosing init/load problems
+      (function(){
+        const style = document.createElement('style');
+        style.innerHTML = `#appDebugPanel{position:fixed; right:12px; top:12px; z-index:120000; background:rgba(0,0,0,0.7); color:#fff; padding:8px 10px; border-radius:6px; font-size:12px; max-width:360px; max-height:220px; overflow:auto; display:none;} #appDebugPanel button{margin-left:8px; font-size:12px;}
+        `;
+        document.head.appendChild(style);
+        const panel = document.createElement('div'); panel.id = 'appDebugPanel';
+        panel.innerHTML = '<div id="appDebugMessages"></div><div style="margin-top:6px;text-align:right;"><button id="appDebugReset" class="btn">Reset UI</button></div>';
+        document.body && document.body.appendChild(panel);
+        window.__appTrace = function(msg){ try { const p = document.getElementById('appDebugPanel'); const m = document.getElementById('appDebugMessages'); if (!p || !m) return; p.style.display = 'block'; const line = document.createElement('div'); line.textContent = (new Date()).toLocaleTimeString() + ' · ' + msg; m.appendChild(line); m.scrollTop = m.scrollHeight; console.debug('APP TRACE:', msg); } catch(e) { console.debug('trace failed', e); } };
+        const resetBtn = document.getElementById('appDebugReset');
+        if (resetBtn) resetBtn.addEventListener('click', function(){ try { const lo = document.getElementById('loadingOverlay'); if (lo) lo.style.display = 'none'; const modal = document.getElementById('appModal'); if (modal) { modal.style.display = 'none'; modal.setAttribute('aria-hidden','true'); modal.style.pointerEvents='auto'; } window.__appTrace && window.__appTrace('User pressed Reset UI'); if (window.app && typeof window.app.loadDirectory === 'function') window.app.loadDirectory(window.app.currentPath || '/'); } catch (e) { window.location.reload(); } });
+      })();
+    </script>
 </head>
 <body>
     <div class="container">
@@ -203,5 +248,70 @@
     </div>
 
     <script src="js/app.js"></script>
+    <script>
+      // Defensive recovery: if a full-screen overlay (loadingOverlay or appModal) remains visible after load,
+      // hide it so the page becomes clickable. This helps when a JS error or interrupted flow leaves the UI blocked.
+      document.addEventListener('DOMContentLoaded', function(){
+        setTimeout(function(){
+          try {
+            const lo = document.getElementById('loadingOverlay');
+            const modal = document.getElementById('appModal');
+
+            function addRecoveryControl() {
+              if (document.getElementById('recoverButton')) return;
+              const btn = document.createElement('button');
+              btn.id = 'recoverButton';
+              btn.textContent = '恢复交互 (重新加载目录)';
+              btn.style.position = 'fixed';
+              btn.style.right = '16px';
+              btn.style.bottom = '16px';
+              btn.style.zIndex = '99999';
+              btn.className = 'btn btn-primary';
+              btn.addEventListener('click', function(){
+                try {
+                  const lo2 = document.getElementById('loadingOverlay'); if (lo2) lo2.style.display = 'none';
+                  const modal2 = document.getElementById('appModal'); if (modal2) { modal2.style.display = 'none'; modal2.setAttribute('aria-hidden','true'); modal2.style.pointerEvents='auto'; }
+                  if (window.app && typeof window.app.loadDirectory === 'function') {
+                    window.app.loadDirectory(window.app.currentPath || '/');
+                  } else {
+                    window.location.reload();
+                  }
+                } catch (e) { window.location.reload(); }
+              });
+              document.body.appendChild(btn);
+            }
+
+            if (lo && getComputedStyle(lo).display !== 'none') {
+              lo.style.display = 'none';
+              lo.style.pointerEvents = 'none';
+              console.debug('Auto-hidden loadingOverlay to restore interactivity');
+            }
+            if (modal && getComputedStyle(modal).display !== 'none') {
+              modal.style.display = 'none';
+              modal.setAttribute('aria-hidden','true');
+              modal.style.pointerEvents = 'none';
+              console.debug('Auto-hidden appModal to restore interactivity');
+            }
+
+            // If overlays reappear or remain, add a recovery control and make overlays non-blocking so user can interact
+            setTimeout(function(){
+              try {
+                const lo2 = document.getElementById('loadingOverlay');
+                const modal2 = document.getElementById('appModal');
+                if ((lo2 && getComputedStyle(lo2).display !== 'none') || (modal2 && getComputedStyle(modal2).display !== 'none')) {
+                  if (lo2) lo2.style.pointerEvents = 'none';
+                  if (modal2) modal2.style.pointerEvents = 'none';
+                  addRecoveryControl();
+                  console.debug('Added recovery control to allow user to restore page');
+                } else {
+                  const btn = document.getElementById('recoverButton'); if (btn) btn.remove();
+                }
+              } catch (e) { console.debug('post-recovery check failed', e); }
+            }, 500);
+
+          } catch (e) { console.debug('overlay recovery failed', e); }
+        }, 800);
+      });
+    </script>
 </body>
 </html>

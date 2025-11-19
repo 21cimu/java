@@ -21,27 +21,35 @@ class CloudDrive {
 
     init() {
         this.setupEventListeners();
+        try { window.__appTrace && window.__appTrace('app.init: setupEventListeners done'); } catch(e){}
         // setup sortable headers after DOM ready
         this.setupSortableHeaders();
+        try { window.__appTrace && window.__appTrace('app.init: setupSortableHeaders done'); } catch(e){}
         // setup view toggle/menu
         this.setupViewToggle();
+        try { window.__appTrace && window.__appTrace('app.init: setupViewToggle done'); } catch(e){}
         // Initialize AI first so sidebar handlers can call hideAIPanel()
         this.initAI();
         this.initSidebar();
         // initialize auth UI (avatar, user center)
+        try { window.__appTrace && window.__appTrace('app.init: calling initAuth'); } catch(e){}
         this.initAuth().then(() => {
+            try { window.__appTrace && window.__appTrace('app.init: initAuth resolved'); } catch(e){}
             this.loadDirectory(this.currentPath);
         });
     }
 
     // ----------------- Authentication / User center -----------------
     async initAuth() {
+        try { window.__appTrace && window.__appTrace('initAuth: start'); } catch(e){}
         try {
             const resp = await fetch(`${this.base}/api/auth?action=current`);
+            try { window.__appTrace && window.__appTrace('initAuth: fetched /api/auth, status=' + resp.status); } catch(e){}
             // 先读取文本，避免 parseJson 在非 JSON 响应时抛出并终止流程
             const respText = await resp.text();
             let data = null;
             try { data = JSON.parse(respText); } catch (e) { data = null; }
+            try { window.__appTrace && window.__appTrace('initAuth: parsed respText -> ' + (data ? 'json' : 'no-json')); } catch(e){}
              const avatarImg = document.getElementById('userAvatarImg');
              const avatarBtn = document.getElementById('userAvatarBtn');
              // 如果后端返回了用户信息且用户名为 root，则将用户引导到管理员控制台
@@ -104,7 +112,8 @@ class CloudDrive {
                 }
                 if (avatarBtn) avatarBtn.addEventListener('click', () => this.showUserCenter());
             } else {
-                // if not logged in, redirect to login page
+                // if not logged in, queue a notify for the login page and redirect
+                try { localStorage.setItem('lastNotify', JSON.stringify({ type: 'error', message: '请先登录' })); } catch (e) { /* ignore */ }
                 window.location.href = this.base + '/login.html';
             }
             // wire logout inside user center modal
@@ -153,12 +162,12 @@ class CloudDrive {
                 const serverAvatar = data.avatar || avatar;
                 if (headerImg && serverAvatar) headerImg.src = serverAvatar;
                 document.getElementById('userCenterModal').style.display = 'none';
-                await this.alertModal('保存成功');
+                try { window.notify && window.notify.success('保存成功'); } catch (e) { await this.alertModal('保存成功'); }
             } else {
-                this.alertModal('保存失败: ' + (data && data.message ? data.message : '未知错误'));
+                try { window.notify && window.notify.error('保存失败: ' + (data && data.message ? data.message : '未知错误')); } catch (e) { this.alertModal('保存失败: ' + (data && data.message ? data.message : '未知错误')); }
             }
         } catch (e) {
-            this.alertModal('保存失败: ' + e.message);
+            try { window.notify && window.notify.error('保存失败: ' + e.message); } catch (err) { this.alertModal('保存失败: ' + e.message); }
         }
     }
 
@@ -190,21 +199,65 @@ class CloudDrive {
                 btn.addEventListener('click', () => {
                     modal.style.display = 'none';
                     modal.setAttribute('aria-hidden', 'true');
+                    // cleanup listeners
+                    modal.removeEventListener('click', backdropHandler);
+                    document.removeEventListener('keydown', keyHandler);
                     resolve(b.value);
                 });
                 footerEl.appendChild(btn);
             });
 
+            // show modal
             modal.style.display = 'flex';
             modal.setAttribute('aria-hidden', 'false');
             // focus first button for accessibility
             const firstBtn = footerEl.querySelector('button');
             if (firstBtn) firstBtn.focus();
+
+            // allow clicking backdrop (modal element) to cancel/close
+            function backdropHandler(ev) {
+                if (ev.target === modal) {
+                    modal.style.display = 'none';
+                    modal.setAttribute('aria-hidden', 'true');
+                    modal.removeEventListener('click', backdropHandler);
+                    document.removeEventListener('keydown', keyHandler);
+                    // resolve with first button id or null
+                    const fallback = buttons.length === 0 ? null : buttons[0].id;
+                    resolve(fallback);
+                }
+            }
+            modal.addEventListener('click', backdropHandler);
+
+            // allow ESC to close modal
+            function keyHandler(ev) {
+                if (ev.key === 'Escape' || ev.key === 'Esc') {
+                    if (modal.style.display === 'flex') {
+                        modal.style.display = 'none';
+                        modal.setAttribute('aria-hidden', 'true');
+                        modal.removeEventListener('click', backdropHandler);
+                        document.removeEventListener('keydown', keyHandler);
+                        const fallback = buttons.length === 0 ? null : buttons[0].id;
+                        resolve(fallback);
+                    }
+                }
+            }
+            document.addEventListener('keydown', keyHandler);
         });
     }
 
     alertModal(message, title='提示') {
-        return this.openModal(title, `<div>${message}</div>`, [ { id: 'ok', label: '确定', value: true, className: 'btn-primary' } ]);
+        const p = this.openModal(title, `<div>${message}</div>`, [ { id: 'ok', label: '确定', value: true, className: 'btn-primary' } ]);
+        // auto-close alert modal after 4s to avoid blocking the UI in error scenarios
+        setTimeout(() => {
+            try {
+                const modal = document.getElementById('appModal');
+                if (modal && modal.style.display === 'flex') {
+                    const okBtn = modal.querySelector('button.btn-primary');
+                    if (okBtn) okBtn.click();
+                }
+            } catch (e) { /* ignore */ }
+        }, 4000);
+        return p;
     }
 
     confirmModal(message, title='确认') {
@@ -647,28 +700,35 @@ class CloudDrive {
         document.getElementById('loadingOverlay').style.display = 'none';
     }
 
-    // Robust JSON parser: if server returned HTML (e.g. index.html) we'll throw a helpful error
+    // Robust JSON parser: if server returned HTML (e.g. index.html) we'll return a failure object instead of throwing
     async parseJson(response) {
         const contentType = response.headers.get('content-type') || '';
         const text = await response.text();
-        // If server sets application/json, parse normally
+        // If server sets application/json, try to parse normally
         if (contentType.includes('application/json')) {
             try {
                 return JSON.parse(text);
             } catch (e) {
-                throw new Error('服务器返回了 application/json 但解析失败: ' + e.message + '\n返回内容预览: ' + (text.length > 200 ? text.substring(0,200) + '...' : text));
+                console.debug('parseJson: content-type=application/json but parse failed:', e);
+                try { window.__appTrace && window.__appTrace('parseJson: json parse failed'); } catch(ex){}
+                // return an object indicating parse failure so callers can handle gracefully
+                return { success: false, __parseError: true, message: '服务器返回了 application/json 但解析失败', raw: text };
             }
         }
         // If content-type is missing or incorrect, try to parse the body as JSON anyway (tolerant)
         try {
             return JSON.parse(text);
         } catch (e) {
-            const preview = text.length > 200 ? text.substring(0,200) + '...' : text;
-            throw new Error('��务器未返回 JSON（或返回了错误的 content-type），返回内容预览: ' + preview);
+            const preview = text.length > 800 ? text.substring(0,800) + '...' : text;
+            console.debug('parseJson: response not JSON, preview:', preview);
+            try { window.__appTrace && window.__appTrace('parseJson: response not JSON, length=' + text.length); } catch(ex){}
+            // Return a failure object rather than throwing so UI can remain interactive
+            return { success: false, __parseError: true, message: '服务器未返回 JSON，可能是 HTML 页面或重定向', raw: preview };
         }
     }
 
     async loadDirectory(path) {
+        try { window.__appTrace && window.__appTrace('loadDirectory: start path=' + path); } catch(e){}
          this.currentPath = path;
          this.showLoading();
          // update list status
@@ -679,8 +739,10 @@ class CloudDrive {
             const url = `${this.base}/api/directory?action=list&path=${encodeURIComponent(path)}`;
             console.debug('loadDirectory fetching URL:', url);
             const response = await fetch(url);
+            try { window.__appTrace && window.__appTrace('loadDirectory: fetch returned status=' + response.status); } catch(e){}
             console.debug('loadDirectory got response status:', response.status, 'content-type:', response.headers.get('content-type'));
             const data = await this.parseJson(response);
+            try { window.__appTrace && window.__appTrace('loadDirectory: parseJson returned, success=' + (!!data && !!data.success)); } catch(e){}
 
             console.debug('loadDirectory response data:', data);
             // (previous debug panel removed) — proceed normally
@@ -747,6 +809,8 @@ class CloudDrive {
                     console.error('updateBreadcrumb is not a function on this:', this);
                     // don't throw; show a helpful message in console and continue
                 }
+                // show small success notification for directory load
+                try { if (window.notify) window.notify.success('加载成功'); } catch (e) { /* ignore */ }
             } else {
                 // If backend returned success=false, try a debug fetch to obtain stack trace
                 this.showError(data.message);
@@ -824,7 +888,8 @@ class CloudDrive {
                 const resp = await fetch(url, { method: 'POST', body: form });
                 const data = await this.parseJson(resp);
                 if (!data.success) {
-                    await this.alertModal('上传文件失败: ' + (data.message || '未知错误'));
+                    // show error notify
+                    try { window.notify && window.notify.error('上传文件失败: ' + (data.message || '未知错误')); } catch (e) {}
                 }
             }
             // clear input
@@ -832,7 +897,7 @@ class CloudDrive {
             if (fileInput) fileInput.value = '';
             await this.loadDirectory(this.currentPath);
         } catch (err) {
-            this.showError('上传失败: ' + err.message);
+            try { window.notify && window.notify.error('上传失败: ' + err.message); } catch (e) { this.showError('上传失败: ' + err.message); }
         } finally {
             this.hideLoading();
         }
@@ -853,12 +918,13 @@ class CloudDrive {
             const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body.toString() });
             const data = await this.parseJson(resp);
             if (data.success) {
+                try { window.notify && window.notify.success('新建文件夹成功'); } catch (e) {}
                 await this.loadDirectory(this.currentPath);
             } else {
-                this.showError('新建文件夹失败: ' + (data.message || '未知错误'));
+                try { window.notify && window.notify.error('新建文件夹失败: ' + (data.message || '未知错误')); } catch (e) { this.showError('新建文件夹失败: ' + (data.message || '未知错误')); }
             }
         } catch (err) {
-            this.showError('新建文件夹失败: ' + err.message);
+            try { window.notify && window.notify.error('新建文件夹失败: ' + err.message); } catch (e) { this.showError('新建文件夹失败: ' + err.message); }
         } finally {
             this.hideLoading();
         }
@@ -924,9 +990,10 @@ class CloudDrive {
             const resp = await fetch(url, { method: 'DELETE' });
             const data = await this.parseJson(resp);
             if (data.success) {
+                try { window.notify && window.notify.success('删除成功'); } catch (e) {}
                 await this.loadDirectory(this.currentPath);
             } else {
-                this.showError('删除失败: ' + (data.message || '未知错误'));
+                try { window.notify && window.notify.error('删除失败: ' + (data.message || '未知错误')); } catch (e) { this.showError('删除失败: ' + (data.message || '未知错误')); }
             }
         } catch (err) {
             this.showError('删除失败: ' + err.message);
@@ -970,7 +1037,7 @@ class CloudDrive {
             }
             await this.loadDirectory(this.currentPath);
         } catch (err) {
-            this.showError('批量删除失败: ' + err.message);
+            try { window.notify && window.notify.error('批量删除失败: ' + err.message); } catch (e) { this.showError('批量删除失败: ' + err.message); }
         } finally {
             this.hideLoading();
         }
@@ -1541,7 +1608,7 @@ class CloudDrive {
                     const url = `${this.base}/share.html?id=${encodeURIComponent(id)}`;
                     try {
                         await navigator.clipboard.writeText(url);
-                        await this.alertModal('分享链接已复制到剪贴板');
+                        try { window.notify && window.notify.success('分享链接已复制到剪贴板'); } catch (e) { await this.alertModal('分享链接已复制到剪贴板'); }
                     } catch (e) {
                         prompt('请复制链接', url);
                     }
@@ -1576,10 +1643,11 @@ class CloudDrive {
              const data = await this.parseJson(resp);
              if (data.success) {
                  const link = data.link || (`${this.base}/api/share/public?id=${encodeURIComponent(data.item.id)}`);
+                 try { window.notify && window.notify.success('分享已创建'); } catch (e) {}
                  await this.alertModal('分享已创建，链接如下:\n' + link, '分享成功');
                  if (this.currentView === 'share') await this.loadShares();
              } else {
-                 this.showError('创建分享失败: ' + (data.message || '未知错误'));
+                 try { window.notify && window.notify.error('创建分享失败: ' + (data.message || '未知错误')); } catch (e) { this.showError('创建分享失败: ' + (data.message || '未知错误')); }
              }
          } catch (e) { this.showError('创建分享失败: ' + e.message); }
          finally { this.hideLoading(); }
@@ -1595,13 +1663,14 @@ class CloudDrive {
             });
             const data = await this.parseJson(response);
             if (data.success) {
+                try { window.notify && window.notify.success('恢复成功'); } catch (e) {}
                 // reload trash view
                 await this.loadDirectory(this.currentPath);
             } else {
-                this.showError(data.message);
+                try { window.notify && window.notify.error(data.message || '恢复失败'); } catch (e) { this.showError(data.message); }
             }
         } catch (error) {
-            this.showError('恢复失败: ' + error.message);
+            try { window.notify && window.notify.error('恢复失败: ' + error.message); } catch (e) { this.showError('恢复失败: ' + error.message); }
         } finally {
             this.hideLoading();
         }
@@ -1634,7 +1703,7 @@ class CloudDrive {
                 }
                 await this.loadDirectory(this.currentPath);
             } else {
-                this.showError(data.message || '批量恢复失败');
+                try { window.notify && window.notify.error(data.message || '批量恢复失败'); } catch (e) { this.showError(data.message || '批量恢复失败'); }
             }
         } catch (err) {
             this.showError('批量恢复失败: ' + err.message);
@@ -1666,6 +1735,7 @@ class CloudDrive {
             });
              const data = await this.parseJson(response);
              if (data.success) {
+                 try { window.notify && window.notify.success('重命名成功'); } catch (e) {}
                  await this.loadDirectory(this.currentPath);
              } else {
                  this.showError(data.message);
@@ -1701,9 +1771,10 @@ class CloudDrive {
             const resp = await fetch(`${this.base}/api/file`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: body.toString() });
             const data = await this.parseJson(resp);
             if (data.success) {
+                try { window.notify && window.notify.success('复制成功'); } catch (e) {}
                 await this.loadDirectory(this.currentPath);
             } else {
-                this.showError('复制失败: ' + (data.message || '未知错误'));
+                try { window.notify && window.notify.error('复制失败: ' + (data.message || '未知错误')); } catch (e) { this.showError('复制失败: ' + (data.message || '未知错误')); }
             }
         } catch (err) {
             this.showError('复制失败: ' + err.message);

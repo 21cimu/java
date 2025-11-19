@@ -21,7 +21,9 @@
 
   async function loadUser(){
     try{
+      try { window.__appTrace && window.__appTrace('user.loadUser: start'); } catch(e){}
       const resp = await fetch(base + '/api/user');
+      try { window.__appTrace && window.__appTrace('user.loadUser: fetched /api/user status=' + resp.status); } catch(e){}
       const data = await resp.json();
       if (!data || !data.success) {
         // not logged in or error -> redirect to login
@@ -35,6 +37,7 @@
       el('usernameInput').value = user.username || '';
       // store id
       el('usernameInput').setAttribute('data-user-id', user.id || '');
+      try { window.__appTrace && window.__appTrace('user.loadUser: render done'); } catch(e){}
     }catch(e){
       console.debug('loadUser error', e);
       // redirect to login as fallback
@@ -45,7 +48,7 @@
   function onAvatarChange(e){
     const f = e.target.files && e.target.files[0];
     if (!f) return;
-    if (!f.type.startsWith('image/')) { alert('请选择图片文件'); return; }
+    if (!f.type.startsWith('image/')) { try { window.notify && window.notify.error('请选择图片文件'); } catch (e) { alert('请选择图片文件'); } return; }
     const reader = new FileReader();
     reader.onload = function(ev){ el('avatarImg').src = ev.target.result; el('avatarImg').setAttribute('data-durl', ev.target.result); };
     reader.readAsDataURL(f);
@@ -65,11 +68,11 @@
     const newPwd = el('newPwd').value || '';
     const confirmPwd = el('confirmPwd').value || '';
 
-    if (!username) { alert('用户名不能为空'); return; }
+    if (!username) { try { window.notify && window.notify.error('用户名不能为空'); } catch (e) { alert('用户名不能为空'); } return; }
     if (newPwd || confirmPwd) {
-      if (newPwd !== confirmPwd) { alert('两次输入的新密码不一致'); return; }
-      if (!currentPwd) { alert('修改密码需要输入当前密码'); return; }
-      if (newPwd.length < 6) { alert('新密码长度至少为 6 字符'); return; }
+      if (newPwd !== confirmPwd) { try { window.notify && window.notify.error('两次输入的新密码不一致'); } catch (e) { alert('两次输入的新密码不一致'); } return; }
+      if (!currentPwd) { try { window.notify && window.notify.error('修改密码需要输入当前密码'); } catch (e) { alert('修改密码需要输入当前密码'); } return; }
+      if (newPwd.length < 6) { try { window.notify && window.notify.error('新密码长度至少为 6 字符'); } catch (e) { alert('新密码长度至少为 6 字符'); } return; }
     }
 
     // build payload
@@ -88,17 +91,20 @@
 
     try{
       const resp = await fetch(base + '/api/user', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      try { window.__appTrace && window.__appTrace('user.onSave: POST /api/user sent'); } catch(e){}
       const data = await resp.json();
       if (data && data.success) {
-        alert('保存成功');
+        // 使用 notify 替换 alert
+        try { window.notify && window.notify.success('保存成功'); } catch (e) {}
         // redirect back to app main page
         window.location.href = base + '/index.html';
       } else {
-        alert('保存失败: ' + (data && data.message ? data.message : '未知错误'));
+        try { window.notify && window.notify.error('保存失败: ' + (data && data.message ? data.message : '未知错误')); } catch (e) { alert('保存失败: ' + (data && data.message ? data.message : '未知错误')); }
       }
     }catch(e){
       console.debug('save error', e);
-      alert('请求失败: ' + e.message);
+      try { window.__appTrace && window.__appTrace('user.onSave: exception ' + (e && e.message)); } catch(e2){}
+      try { window.notify && window.notify.error('请求失败: ' + e.message); } catch (err) { alert('请求失败: ' + e.message); }
     }
   }
 
@@ -106,6 +112,8 @@
     try{
       await fetch(base + '/api/auth?action=logout', { method: 'POST' });
     }catch(e){}
+    // queue notify to show on login page
+    try { localStorage.setItem('lastNotify', JSON.stringify({ type: 'info', message: '已登出' })); } catch (e) {}
     window.location.href = base + '/login.html';
   }
 
